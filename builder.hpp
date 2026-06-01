@@ -24,7 +24,8 @@ static inline constexpr RequiredT Required;
 template<typename B, typename T, bool Unique = true, auto... UsedMethods>
 consteval std::vector<std::meta::info> defineBuilderMembers();
 
-
+template<typename T>
+static void callValidateIfExists(T& object)
 
 template<typename T>
 struct ExtractBaseBuilder;
