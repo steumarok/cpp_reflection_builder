@@ -1,9 +1,11 @@
 # Dynamic class builder with C++26 Reflection
 
-Author: Stefano Marocco <stefano.marocco@gmail.com>
-License: GNU GENERAL PUBLIC LICENSE v3
+Author: Stefano Marocco <stefano.marocco@gmail.com><br>
 
-This is a C++26 reflection builder implementation. 
+License: GNU GENERAL PUBLIC LICENSE v3<br>
+
+This is a C++26 reflection builder implementation. <br>
+
 Main features are:
 - data member and function annotations
 - derived class support
@@ -12,24 +14,30 @@ Main features are:
 
 ## Functions
 
-- refl_builder::makeSharedBuilder
+- refl_builder::makeSharedBuilder<br>
+
   create a shared_ptr object
 
-- refl_builder::makeUniqueBuilder
+- refl_builder::makeUniqueBuilder<br>
+
   create a unique_ptr object
 
-- refl_builder::makeValueBuilder
+- refl_builder::makeValueBuilder<br>
+
   create a value object
 
 ## Annotations
 
-- refl_builder::BuilderParam
+- refl_builder::BuilderParam<br>
+
   Applied to data members, will generate a method called "with" + name. 
 
-- refl_builder::BuilderMethod
+- refl_builder::BuilderMethod<br>
+
   Applied to functions, will generate a method called like the function name. 
 
-- refl_builder::Required
+- refl_builder::Required<br>
+
   Disable the build method if not all required methods are called.
 
 ## Usage
