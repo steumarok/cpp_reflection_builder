@@ -8,7 +8,13 @@
 
 namespace refl_builder {
 
-template<typename B, typename T, bool Unique, auto Fn, auto MethodTag, auto... UsedMethods>
+enum class OutputType {
+    Unique,
+    Shared,
+    Value
+};
+
+template<typename B, typename T, OutputType Output, auto Fn, auto MethodTag, auto... UsedMethods>
 struct WithMethod;
 
 struct BuilderParamT {};
@@ -21,11 +27,11 @@ static inline constexpr BuilderMethodT BuilderMethod;
 static inline constexpr BuilderValidateT BuilderValidate;
 static inline constexpr RequiredT Required;
 
-template<typename B, typename T, bool Unique = true, auto... UsedMethods>
+template<typename B, typename T, OutputType Output, auto... UsedMethods>
 consteval std::vector<std::meta::info> defineBuilderMembers();
 
 template<typename T>
-static void callValidateIfExists(T& object)
+static void callValidateIfExists(T& object);
 
 template<typename T>
 struct ExtractBaseBuilder;
@@ -72,17 +78,24 @@ constexpr bool AllMethodsCalled = [] consteval {
     return requiredCount == 0;
 }();
 
-template<typename B, typename T, bool Unique>
+template<typename B, typename T, OutputType Output>
 B& initBuilder();
 
-template<typename B, typename T, auto... UsedMethods>
+template<typename B, typename T, OutputType Output, auto... UsedMethods>
 class FinalBuilder final : public B
 {
 public:
     auto build() 
         requires AllMethodsCalled<T, UsedMethods...>
     {
-        callValidateIfExists(*this->object_);
+        if constexpr (Output == OutputType::Value)
+        {
+            callValidateIfExists(this->object_);
+        }
+        else
+        {
+            callValidateIfExists(*this->object_);
+        }
 
         auto object = std::move(this->object_);
         delete this;
@@ -90,21 +103,21 @@ public:
     }
 };
 
-template<typename B, typename T>
-struct ExtractBaseBuilder<FinalBuilder<B, T>>
+template<typename B, typename T, OutputType Output>
+struct ExtractBaseBuilder<FinalBuilder<B, T, Output>>
 {
     using type = B;
 };
 
-template<typename B, typename T, bool Unique>
+template<typename B, typename T, OutputType Output>
 B& initBuilder() {
     B* builder = new B;
 
-    if constexpr (Unique)
+    if constexpr (Output == OutputType::Unique)
     {
         builder->object_ = std::make_unique<T>();
     }
-    else
+    else if constexpr (Output == OutputType::Shared)
     {
         builder->object_ = std::make_shared<T>();
     }
@@ -134,25 +147,32 @@ B& initBuilder() {
     return *builder;
 }
 
-template<typename B, typename T, typename S, bool Unique, auto... UsedMethods>
+template<typename B, typename T, typename S, OutputType Output, auto... UsedMethods>
 consteval void processClass(std::vector<std::meta::info>& builderMembers);
 
 
-template<typename T, bool Unique, auto... UsedMethods>
+template<typename T, OutputType Output, auto... UsedMethods>
 auto& reinterpretBuilder(auto& builder) {
     struct NB;
     consteval {
-        auto builderMembers = defineBuilderMembers<NB, T, Unique, UsedMethods...>();
+        auto builderMembers = defineBuilderMembers<NB, T, Output, UsedMethods...>();
         std::meta::define_aggregate(^^NB, builderMembers);
     } 
-    return reinterpret_cast<FinalBuilder<NB, T, UsedMethods...>&>(builder);
+    return reinterpret_cast<FinalBuilder<NB, T, Output, UsedMethods...>&>(builder);
 }
 
-template<typename B, typename T, bool Unique, auto WithFn, auto MethodTag, auto... UsedMethods>
+template<typename B, typename T, OutputType Output, auto WithFn, auto MethodTag, auto... UsedMethods>
 struct WithMethod {
-    FinalBuilder<B, T, UsedMethods...>* builder_;
+    FinalBuilder<B, T, Output, UsedMethods...>* builder_;
     auto& operator()(auto... args) {
-        WithFn(*builder_->object_, std::forward<decltype(args)>(args)...);
+        if constexpr (Output == OutputType::Value)
+        {
+            WithFn(builder_->object_, std::forward<decltype(args)>(args)...);
+        }
+        else
+        {
+            WithFn(*builder_->object_, std::forward<decltype(args)>(args)...);
+        }
 
         constexpr bool alreadyUsed = ((MethodTag == UsedMethods) || ...);
         if constexpr (alreadyUsed)
@@ -161,7 +181,7 @@ struct WithMethod {
         }
         else
         {
-            return reinterpretBuilder<T, Unique, UsedMethods..., MethodTag>(*builder_);
+            return reinterpretBuilder<T, Output, UsedMethods..., MethodTag>(*builder_);
         }
     }
 };
@@ -225,7 +245,7 @@ consteval auto makeWithName(std::string_view field)
     return result;
 }
 
-template<typename B, typename T, typename S, bool Unique, auto... UsedMethods>
+template<typename B, typename T, typename S, OutputType Output, auto... UsedMethods>
 consteval void processClass(std::vector<std::meta::info>& builderMembers)
 {
     constexpr auto members = std::define_static_array(
@@ -247,7 +267,7 @@ consteval void processClass(std::vector<std::meta::info>& builderMembers)
 
             builderMembers.push_back(
                 std::meta::data_member_spec(
-                    ^^WithMethod<B, S, Unique, builderMethod, m, UsedMethods...>,  
+                    ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>,  
                     {.name = std::meta::identifier_of(m)} 
                 )
             );
@@ -261,7 +281,7 @@ consteval void processClass(std::vector<std::meta::info>& builderMembers)
 
             builderMembers.push_back(
                 std::meta::data_member_spec(
-                    ^^WithMethod<B, S, Unique, builderMethod, m, UsedMethods...>, 
+                    ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>, 
                     {.name = makeWithName(std::meta::identifier_of(m))} 
                 )
             );
@@ -275,23 +295,25 @@ consteval void processClass(std::vector<std::meta::info>& builderMembers)
     {
         using Base = [: std::meta::type_of(base) :];
 
-        processClass<B, Base, S, Unique, UsedMethods...>(builderMembers);
+        processClass<B, Base, S, Output, UsedMethods...>(builderMembers);
     }
 }
 
-template<typename B, typename T, bool Unique, auto... UsedMethods>
+template<typename B, typename T, OutputType Output, auto... UsedMethods>
 consteval std::vector<std::meta::info> defineBuilderMembers()
 {
     constexpr auto members = std::define_static_array(
         std::meta::members_of(^^T, std::meta::access_context::unchecked())
     );
 
-    auto getPointerTypeInfo = []() consteval {
-        return Unique ? ^^std::unique_ptr<T> : ^^std::shared_ptr<T>;
+    auto getObjectTypeInfo = []() consteval {
+        if (Output == OutputType::Unique) return ^^std::unique_ptr<T>;
+        else if (Output == OutputType::Shared) return ^^std::shared_ptr<T>;
+        return ^^T;
     };
 
     constexpr auto objectMember = std::meta::data_member_spec(
-        getPointerTypeInfo(), 
+        getObjectTypeInfo(), 
         {.name = "object_"} 
     );
 
@@ -299,32 +321,38 @@ consteval std::vector<std::meta::info> defineBuilderMembers()
         objectMember
     };
 
-    processClass<B, T, T, Unique, UsedMethods...>(builderMembers);
+    processClass<B, T, T, Output, UsedMethods...>(builderMembers);
 
     return builderMembers;
 }
 
-template<typename T, bool Unique = true>
+template<typename T, OutputType Output>
 auto& makeBuilder() 
 {
     struct B;
     consteval {
-        auto builderMembers = defineBuilderMembers<B, T, Unique>();
+        auto builderMembers = defineBuilderMembers<B, T, Output>();
         std::meta::define_aggregate(^^B, builderMembers);
     } 
-    return initBuilder<FinalBuilder<B, T>, T, Unique>();
+    return initBuilder<FinalBuilder<B, T, Output>, T, Output>();
 }
 
 template<typename T>
 auto& makeSharedBuilder()
 {
-    return makeBuilder<T, false>();
+    return makeBuilder<T, OutputType::Shared>();
 }
 
 template<typename T>
 auto& makeUniqueBuilder()
 {
-    return makeBuilder<T, true>();
+    return makeBuilder<T, OutputType::Unique>();
+}
+
+template<typename T>
+auto& makeValueBuilder()
+{
+    return makeBuilder<T, OutputType::Value>();
 }
 
 }
