@@ -9,7 +9,7 @@ This is a C++26 reflection builder implementation. <br>
 Main features are:
 - data member and function annotations
 - derived class support
-- annotation for required member
+- annotation for required members (disabling the build method at compile-time)
 - unique, shared and value object creation
 
 ## Functions
@@ -75,7 +75,7 @@ class A
         c_ = bar * 2;
     }
 
-  [[=refl_builder::BuilderValidate]] 
+    [[=refl_builder::BuilderValidate]] 
     void validate() 
     {
         if (c_ == 0)
