@@ -40,6 +40,10 @@ Main features are:
 
   Disable the build method if not all required methods are called.
 
+- refl_builder::BuilderValidate<br>
+
+  Called in the build method for allow consistency check of the object.
+
 ## Usage
 
 Annotate the data members and function and implement a static builder() function:
@@ -63,12 +67,21 @@ Simple unique object builder:
 class A
 {
     [[=refl_builder::BuilderParam, =refl_builder::Required]] 
-    int c_ = 10;
+    int c_ = 0;
 
     [[=refl_builder::BuilderMethod]] 
     void withBar(int bar) 
     {
         c_ = bar * 2;
+    }
+
+  [[=refl_builder::BuilderValidate]] 
+    void validate() 
+    {
+        if (c_ == 0)
+        {
+            throw std::runtime_error("value of c is not valid");
+        }
     }
 
 public:
