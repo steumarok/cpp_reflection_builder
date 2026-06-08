@@ -5,8 +5,10 @@
 #include <meta>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 namespace refl_builder {
+
 
 enum class OutputType {
     Unique,
@@ -43,10 +45,21 @@ constexpr bool AllMethodsCalled = [] consteval {
     std::vector<std::meta::info> requiredMethods;
 
     auto collectRequiredMethods = [&requiredMethods]<typename C>(auto&& self) consteval {
-        constexpr auto members = std::define_static_array(
-            std::meta::members_of(^^C, std::meta::access_context::unchecked())
+        static constexpr auto nonstaticMembers = std::define_static_array(
+            std::meta::nonstatic_data_members_of(^^C, std::meta::access_context::unchecked())
         );
-        template for (constexpr auto m : auto(members))
+        template for (constexpr auto m : nonstaticMembers)
+        {
+            if (std::meta::annotations_of_with_type(m, ^^RequiredT).size() == 1)
+            {
+                requiredMethods.push_back(m);
+            }
+        }
+
+        static constexpr auto staticMembers = std::define_static_array(
+            std::meta::static_data_members_of(^^C, std::meta::access_context::unchecked())
+        );
+        template for (constexpr auto m : staticMembers)
         {
             if (std::meta::annotations_of_with_type(m, ^^RequiredT).size() == 1)
             {
@@ -248,31 +261,42 @@ consteval auto makeWithName(std::string_view field)
 template<typename B, typename T, typename S, OutputType Output, auto... UsedMethods>
 consteval void processClass(std::vector<std::meta::info>& builderMembers)
 {
-    constexpr auto members = std::define_static_array(
+    static constexpr auto staticMembers = std::define_static_array(
         std::meta::members_of(^^T, std::meta::access_context::unchecked())
     );
 
-    template for (constexpr auto m : auto(members))
+    template for (constexpr auto m : staticMembers)
     {
         if constexpr (
-            std::meta::is_function(m) && 
-            std::meta::annotations_of_with_type(m, ^^BuilderMethodT).size() == 1 &&
             !std::meta::is_special_member_function(m) &&
             !std::meta::is_constructor(m))
         {
-            auto builderMethod = [](T& obj, auto...args){
-                constexpr auto memptr = &[: m :];  // workaround for private access
-                (obj.*memptr)(std::forward<decltype(args)>(args)...);
-            };
+            if constexpr (
+                std::meta::is_function(m) && 
+                std::meta::annotations_of_with_type(m, ^^BuilderMethodT).size() == 1)
+            {
+                auto builderMethod = [](T& obj, auto...args){
+                    constexpr auto memptr = &[: m :];  // workaround for private access
+                    (obj.*memptr)(std::forward<decltype(args)>(args)...);
+                };
 
-            builderMembers.push_back(
-                std::meta::data_member_spec(
-                    ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>,  
-                    {.name = std::meta::identifier_of(m)} 
-                )
-            );
+                builderMembers.push_back(
+                    std::meta::data_member_spec(
+                        ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>,  
+                        {.name = std::meta::identifier_of(m)} 
+                    )
+                );
+            }
         }
-        else if constexpr (std::meta::annotations_of_with_type(m, ^^BuilderParamT).size() == 1)
+    }
+
+    static constexpr auto nonstaticMembers = std::define_static_array(
+        std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked())
+    );
+
+    template for (constexpr auto m : nonstaticMembers)
+    {
+        if constexpr (std::meta::annotations_of_with_type(m, ^^BuilderParamT).size() == 1)
         {
             using P = typename[:std::meta::type_of(m):]; 
             auto builderMethod = [](T& obj, P arg){
