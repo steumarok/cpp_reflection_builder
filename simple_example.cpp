@@ -26,7 +26,7 @@ private:
 class Derived : public Base
 {
 private:
-    [[=rb::BuilderParam]] 
+    [[=rb::BuilderExpose{}]] 
     int b_ = 10;
 
 public:
@@ -46,14 +46,14 @@ private:
 
 int main() {
 
-    auto a = rb::makeValueBuilder<Derived>()
+    auto a = rb::makeSharedBuilder<Derived>()
         .withFoo(10)
         .withBar(10)
         .withB(19)
         .withC(20)
         .build();
 
-    std::cout << a.getB() << std::endl;
+    std::cout << a->getB() << std::endl;
 
     return 1978;
 }
