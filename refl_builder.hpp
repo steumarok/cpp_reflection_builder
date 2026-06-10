@@ -16,216 +16,126 @@ enum class OutputType {
     Value
 };
 
-template<typename B, typename T, OutputType Output, auto Fn, auto MethodTag, auto... UsedMethods>
+template<typename H, typename B, typename T, OutputType Output, auto Fn, auto BitMask, uint64_t RequiredMask>
 struct WithMethod;
 
-struct BuilderParamT {};
-struct BuilderMethodT {};
-struct BuilderValidateT {};
-struct RequiredT {};
+struct BuilderExpose {
+    bool required;
+};
+struct BuilderValidate {};
 
-static inline constexpr BuilderParamT BuilderParam;
-static inline constexpr BuilderMethodT BuilderMethod;
-static inline constexpr BuilderValidateT BuilderValidate;
-static inline constexpr RequiredT Required;
-
-template<typename B, typename T, OutputType Output, auto... UsedMethods>
+template<typename H, typename B, typename T, OutputType Output, uint64_t RequiredMask>
 consteval std::vector<std::meta::info> defineBuilderMembers();
 
 template<typename T>
-static void callValidateIfExists(T& object);
+static void callValidate(T& object);
 
-template<typename T>
-struct ExtractBaseBuilder;
+template<typename H, typename T, OutputType Output, uint64_t RequiredMask>
+auto createBuilder(H holder);
 
-
-template<typename T, auto... UsedMethods>
-constexpr bool AllMethodsCalled = [] consteval {
-
-    std::vector<std::meta::info> requiredMethods;
-
-    auto collectRequiredMethods = [&requiredMethods]<typename C>(auto&& self) consteval {
-        static constexpr auto nonstaticMembers = std::define_static_array(
-            std::meta::nonstatic_data_members_of(^^C, std::meta::access_context::unchecked())
-        );
-        template for (constexpr auto m : nonstaticMembers)
-        {
-            if (std::meta::annotations_of_with_type(m, ^^RequiredT).size() == 1)
-            {
-                requiredMethods.push_back(m);
-            }
-        }
-
-        static constexpr auto staticMembers = std::define_static_array(
-            std::meta::static_data_members_of(^^C, std::meta::access_context::unchecked())
-        );
-        template for (constexpr auto m : staticMembers)
-        {
-            if (std::meta::annotations_of_with_type(m, ^^RequiredT).size() == 1)
-            {
-                requiredMethods.push_back(m);
-            }
-        }
-
-        constexpr auto bases = std::define_static_array(
-            std::meta::bases_of(^^C, std::meta::access_context::unchecked())
-        );
-        template for (constexpr auto base : auto(bases))
-        {
-            using Base = [: std::meta::type_of(base) :];
-            self.template operator()<Base>(self);
-        }
-    };
-
-    collectRequiredMethods.template operator()<T>(collectRequiredMethods);
-
-    int requiredCount = requiredMethods.size();
-    auto checkMethod = [&requiredMethods, &requiredCount]<auto M>()
-    {
-        if (std::find(requiredMethods.begin(), requiredMethods.end(), M) != requiredMethods.end())
-        {
-            requiredCount--;
-        }
-    };
-    (checkMethod.template operator()<UsedMethods>(), ...);
-    return requiredCount == 0;
-}();
-
-template<typename B, typename T, OutputType Output>
-B& initBuilder();
-
-template<typename B, typename T, OutputType Output, auto... UsedMethods>
-class FinalBuilder final : public B
+template<typename H, typename B, typename T, OutputType Output, uint64_t RequiredMask>
+class FinalBuilder : public B
 {
+
 public:
+    FinalBuilder(H holder) 
+    {
+        setHolder(std::move(holder));
+    }
+
+    FinalBuilder(const FinalBuilder&) = delete;
+    FinalBuilder& operator=(const FinalBuilder&) = delete;
+
+    FinalBuilder(FinalBuilder&&) = default;
+    FinalBuilder& operator=(FinalBuilder&&) = default;
+    
     auto build() 
-        requires AllMethodsCalled<T, UsedMethods...>
+        requires (RequiredMask == 0)
     {
         if constexpr (Output == OutputType::Value)
         {
-            callValidateIfExists(this->object_);
+            callValidate(this->holder_);
         }
         else
         {
-            callValidateIfExists(*this->object_);
+            callValidate(*this->holder_);
         }
-
-        auto object = std::move(this->object_);
-        delete this;
-        return object;
-    }
-};
-
-template<typename B, typename T, OutputType Output>
-struct ExtractBaseBuilder<FinalBuilder<B, T, Output>>
-{
-    using type = B;
-};
-
-template<typename B, typename T, OutputType Output>
-B& initBuilder() {
-    B* builder = new B;
-
-    if constexpr (Output == OutputType::Unique)
-    {
-        builder->object_ = std::make_unique<T>();
-    }
-    else if constexpr (Output == OutputType::Shared)
-    {
-        builder->object_ = std::make_shared<T>();
+        return std::move(this->holder_);
     }
 
-    using BB = typename ExtractBaseBuilder<B>::type;
-    constexpr auto members = std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^BB, std::meta::access_context::unchecked())
-    );
-    template for (constexpr auto m : auto(members))
+private:
+    static consteval auto getMembers()
     {
-        constexpr auto type = type_of(m);
-        if constexpr (std::meta::is_class_member(m) && 
-            std::meta::has_template_arguments(type))
+        return std::define_static_array(
+            std::meta::members_of(
+                ^^B,
+                std::meta::access_context::unchecked()
+            )
+        );
+    }
+
+    constexpr void setHolder(H holder)
+    {
+        this->holder_ = std::move(holder);
+        
+        template for (constexpr auto m : getMembers())
         {
-            constexpr auto args = std::define_static_array(
-                std::meta::template_arguments_of(type)
-            );
-            if constexpr (std::meta::is_same_type(args[0], ^^BB))
+            if constexpr (
+                std::meta::is_class_member(m) && 
+                !std::meta::is_constructor(m) && 
+                !is_special_member_function(m) && 
+                !is_destructor(m)) 
             {
-                if constexpr (std::meta::template_of(type) == ^^WithMethod)
+                constexpr auto type = type_of(m);
+
+                if constexpr (std::meta::has_template_arguments(type))
                 {
-                    builder->[:m:].builder_ = builder;
-                }
+                    static constexpr auto args = std::define_static_array(
+                        std::meta::template_arguments_of(type)
+                    );
+                    
+                    if constexpr (std::meta::template_of(type) == ^^WithMethod)
+                    {
+                        this->[:m:].holder_ = &this->holder_;
+                    }          
+                }  
             }
         }
     }
-    return *builder;
+
+};
+
+template<auto V>
+struct PrintValue;
+
+template<typename H, typename B, typename T, OutputType Output>
+B initBuilder(H holder) {
+    return B(std::move(holder));
 }
 
-template<typename B, typename T, typename S, OutputType Output, auto... UsedMethods>
+
+template<typename B, typename T, typename S, OutputType Output, uint64_t RequiredMask>
 consteval void processClass(std::vector<std::meta::info>& builderMembers);
 
 
-template<typename T, OutputType Output, auto... UsedMethods>
-auto& reinterpretBuilder(auto& builder) {
-    struct NB;
-    consteval {
-        auto builderMembers = defineBuilderMembers<NB, T, Output, UsedMethods...>();
-        std::meta::define_aggregate(^^NB, builderMembers);
-    } 
-    return reinterpret_cast<FinalBuilder<NB, T, Output, UsedMethods...>&>(builder);
-}
-
-template<typename B, typename T, OutputType Output, auto WithFn, auto MethodTag, auto... UsedMethods>
+template<typename H, typename B, typename T, OutputType Output, auto WithFn, auto BitMask, uint64_t RequiredMask>
 struct WithMethod {
-    FinalBuilder<B, T, Output, UsedMethods...>* builder_;
-    auto& operator()(auto... args) {
+    H* holder_;
+    auto operator()(auto... args) {
+
         if constexpr (Output == OutputType::Value)
         {
-            WithFn(builder_->object_, std::forward<decltype(args)>(args)...);
+            WithFn(*holder_, std::forward<decltype(args)>(args)...);
         }
         else
         {
-            WithFn(*builder_->object_, std::forward<decltype(args)>(args)...);
+            WithFn(*holder_->get(), std::forward<decltype(args)>(args)...);
         }
-
-        constexpr bool alreadyUsed = ((MethodTag == UsedMethods) || ...);
-        if constexpr (alreadyUsed)
-        {
-            return *builder_;
-        }
-        else
-        {
-            return reinterpretBuilder<T, Output, UsedMethods..., MethodTag>(*builder_);
-        }
+         
+        return createBuilder<H, T, Output, RequiredMask & ~BitMask>(std::move(*holder_));
     }
 };
 
-template<typename T>
-static void callValidateIfExists(T& object)
-{
-    constexpr auto members = std::define_static_array(
-        std::meta::members_of(^^T, std::meta::access_context::unchecked())
-    );
-    template for (constexpr auto m : auto(members))
-    {
-        if constexpr (
-            std::meta::is_function(m) && 
-            std::meta::annotations_of_with_type(m, ^^BuilderValidateT).size() == 1)
-        {
-            constexpr auto memptr = &[: m :];
-            (object.*memptr)();
-        }
-    }
-
-    constexpr auto bases = std::define_static_array(
-        std::meta::bases_of(^^T, std::meta::access_context::unchecked())
-    );
-    template for (constexpr auto base : auto(bases))
-    {
-        using Base = [: std::meta::type_of(base) :];
-
-        callValidateIfExists<Base>(object);
-    }
-}
 
 consteval char toUpperAscii(char c)
 {
@@ -258,123 +168,277 @@ consteval auto makeWithName(std::string_view field)
     return result;
 }
 
-template<typename B, typename T, typename S, OutputType Output, auto... UsedMethods>
-consteval void processClass(std::vector<std::meta::info>& builderMembers)
+enum class MemberType
 {
-    static constexpr auto staticMembers = std::define_static_array(
-        std::meta::members_of(^^T, std::meta::access_context::unchecked())
-    );
+    Data,
+    Method,
+    Validate
+};
 
-    template for (constexpr auto m : staticMembers)
+struct MemberInfo
+{
+    int index;
+    bool required;
+    std::meta::info member;
+    MemberType type;
+};
+
+template<typename T>
+consteval auto collectClassMemberInfo()
+{
+    std::vector<MemberInfo> memberInfos;
+
+    auto visit = [&]<typename C>(auto&& self) consteval
     {
-        if constexpr (
-            !std::meta::is_special_member_function(m) &&
-            !std::meta::is_constructor(m))
-        {
-            if constexpr (
-                std::meta::is_function(m) && 
-                std::meta::annotations_of_with_type(m, ^^BuilderMethodT).size() == 1)
-            {
-                auto builderMethod = [](T& obj, auto...args){
-                    constexpr auto memptr = &[: m :];  // workaround for private access
-                    (obj.*memptr)(std::forward<decltype(args)>(args)...);
-                };
+        static constexpr auto members =
+            std::define_static_array(
+                std::meta::members_of(^^C,
+                    std::meta::access_context::unchecked())
+            );
 
-                builderMembers.push_back(
-                    std::meta::data_member_spec(
-                        ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>,  
-                        {.name = std::meta::identifier_of(m)} 
-                    )
+        template for (constexpr auto m : members)
+        {
+            if constexpr (std::meta::is_function(m))
+            {
+                constexpr auto anns = std::define_static_array(
+                    std::meta::annotations_of_with_type(m, ^^BuilderExpose)
                 );
+
+                if constexpr (anns.size() == 1)
+                {
+                    using A = typename[:std::meta::type_of(anns[0]):];
+                    constexpr auto cfg = std::meta::extract<A>(anns[0]);
+
+                    int index = memberInfos.size();
+                    memberInfos.push_back({
+                        .index = index,
+                        .required = cfg.required,
+                        .member = m,
+                        .type = MemberType::Method
+                    });
+                }
+                else if (std::meta::annotations_of_with_type(m, ^^BuilderValidate).size() == 1)
+                {
+                    int index = memberInfos.size();
+                    memberInfos.push_back({
+                        .index = index,
+                        .required = false,
+                        .member = m,
+                        .type = MemberType::Validate
+                    });
+                }
             }
         }
-    }
 
-    static constexpr auto nonstaticMembers = std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked())
-    );
-
-    template for (constexpr auto m : nonstaticMembers)
-    {
-        if constexpr (std::meta::annotations_of_with_type(m, ^^BuilderParamT).size() == 1)
-        {
-            using P = typename[:std::meta::type_of(m):]; 
-            auto builderMethod = [](T& obj, P arg){
-                obj.[:m:] = std::move(arg);
-            };
-
-            builderMembers.push_back(
-                std::meta::data_member_spec(
-                    ^^WithMethod<B, S, Output, builderMethod, m, UsedMethods...>, 
-                    {.name = makeWithName(std::meta::identifier_of(m))} 
-                )
+        static constexpr auto nonstatic_members =
+            std::define_static_array(
+                std::meta::nonstatic_data_members_of(^^C,
+                    std::meta::access_context::unchecked())
             );
+
+        template for (constexpr auto m : nonstatic_members)
+        {
+            if constexpr (!std::meta::is_function(m))
+            {
+                constexpr auto anns = std::define_static_array(
+                    std::meta::annotations_of_with_type(m, ^^BuilderExpose)
+                );
+
+                if constexpr (anns.size() == 1)
+                {
+                    using A = typename[:std::meta::type_of(anns[0]):];
+                    constexpr auto cfg = std::meta::extract<A>(anns[0]);
+
+                    int index = memberInfos.size();
+                    memberInfos.push_back({
+                        .index = index,
+                        .required = cfg.required,
+                        .member = m,
+                        .type = MemberType::Data
+                    });
+                }
+            }
         }
+
+        static constexpr auto bases =
+            std::define_static_array(
+                std::meta::bases_of(^^C,
+                    std::meta::access_context::unchecked())
+            );
+
+        template for (constexpr auto b : bases)
+        {
+            using Base = [: std::meta::type_of(b) :];
+            self.template operator()<Base>(self);
+        }
+    };
+
+    visit.template operator()<T>(visit);
+
+    return std::define_static_array(memberInfos);
+}
+
+
+template<typename T>
+struct ClassRegistry
+{
+    static constexpr auto classMemberInfos = collectClassMemberInfo<T>();
+
+    template<auto Member>
+    static consteval auto memberIndex()
+    {
+        for (int i = 0; i < classMemberInfos.size(); ++i)
+        {
+            if (classMemberInfos[i].member == Member)
+            {
+                return i;
+            }
+        }
+
+        return 0;
     }
 
-    constexpr auto bases = std::define_static_array(
-        std::meta::bases_of(^^T, std::meta::access_context::unchecked())
-    );
-    template for (constexpr auto base : auto(bases))
+    static consteval uint64_t requiredMask()
     {
-        using Base = [: std::meta::type_of(base) :];
+        uint64_t mask = 0;
+        for (size_t i = 0; i < classMemberInfos.size(); ++i)
+        {
+            if (classMemberInfos[i].required)
+            {
+                mask |= (1ull << classMemberInfos[i].index);
+            }
+        }
+        return mask;
+    }
 
-        processClass<B, Base, S, Output, UsedMethods...>(builderMembers);
+};
+
+template<typename T>
+static void callValidate(T& object)
+{
+    template for (constexpr auto m : ClassRegistry<T>::classMemberInfos)
+    {
+        if constexpr (m.type == MemberType::Validate) 
+        {
+            constexpr auto memptr = &[: m.member :];
+            (object.*memptr)();
+        }
     }
 }
 
-template<typename B, typename T, OutputType Output, auto... UsedMethods>
+template<typename H, typename B, typename T, OutputType Output, uint64_t RequiredMask>
 consteval std::vector<std::meta::info> defineBuilderMembers()
 {
     constexpr auto members = std::define_static_array(
         std::meta::members_of(^^T, std::meta::access_context::unchecked())
     );
 
-    auto getObjectTypeInfo = []() consteval {
-        if (Output == OutputType::Unique) return ^^std::unique_ptr<T>;
-        else if (Output == OutputType::Shared) return ^^std::shared_ptr<T>;
-        return ^^T;
-    };
-
-    constexpr auto objectMember = std::meta::data_member_spec(
-        getObjectTypeInfo(), 
-        {.name = "object_"} 
-    );
-
     std::vector<std::meta::info> builderMembers = { 
-        objectMember
+        std::meta::data_member_spec(
+            ^^H, 
+            {.name = "holder_"} 
+        )
     };
 
-    processClass<B, T, T, Output, UsedMethods...>(builderMembers);
+    template for (constexpr auto m : ClassRegistry<T>::classMemberInfos)
+    {
+        constexpr auto BitMask = m.required ? (1ull << m.index) : 0ull;
+
+        if constexpr (m.type == MemberType::Method)
+        {
+            auto builderMethod = [](T& obj, auto...args){
+                constexpr auto memptr = &[: m.member :];  // workaround for private access
+                (obj.*memptr)(std::forward<decltype(args)>(args)...);
+            };
+
+            builderMembers.push_back(
+                std::meta::data_member_spec(
+                    ^^WithMethod<H, B, T, Output, builderMethod, BitMask, RequiredMask>,  
+                    {.name = std::meta::identifier_of(m.member)} 
+                )
+            );
+        }
+        else if constexpr (m.type == MemberType::Data)
+        {
+            using P = typename[:std::meta::type_of(m.member):]; 
+            auto builderMethod = [](T& obj, P arg){
+                obj.[:m.member:] = std::move(arg);
+            };
+
+            builderMembers.push_back(
+                std::meta::data_member_spec(
+                    ^^WithMethod<H, B, T, Output, builderMethod, BitMask, RequiredMask>, 
+                    {.name = makeWithName(std::meta::identifier_of(m.member))} 
+                )
+            );
+        }
+    }
 
     return builderMembers;
 }
 
-template<typename T, OutputType Output>
-auto& makeBuilder() 
+template<typename H, typename T, OutputType Output, uint64_t RequiredMask>
+auto createBuilder(H holder) 
 {
     struct B;
     consteval {
-        auto builderMembers = defineBuilderMembers<B, T, Output>();
+        auto builderMembers = defineBuilderMembers<H, B, T, Output, RequiredMask>();
         std::meta::define_aggregate(^^B, builderMembers);
     } 
-    return initBuilder<FinalBuilder<B, T, Output>, T, Output>();
+    return FinalBuilder<H, B, T, Output, RequiredMask>(std::move(holder));
 }
 
+template<typename T, OutputType Output>
+auto makeBuilder() 
+{
+    constexpr auto objectHolderInfo = []() consteval {
+        if (Output == OutputType::Unique) return ^^std::unique_ptr<T>;
+        else if (Output == OutputType::Shared) return ^^std::shared_ptr<T>;
+        return ^^T;
+    }();
+
+    using H = typename[:objectHolderInfo:];
+
+    struct B;
+    constexpr auto requiredMask = ClassRegistry<T>::requiredMask();
+    consteval {
+        auto builderMembers = defineBuilderMembers<H, B, T, Output, requiredMask>();
+        std::meta::define_aggregate(^^B, builderMembers);
+    } 
+
+    auto createHolder = [] -> H {
+        if constexpr (Output == OutputType::Unique)
+        {
+            return std::make_unique<T>();
+        }
+        else if constexpr (Output == OutputType::Shared)
+        {
+            return std::make_shared<T>();
+        }
+        else
+        {
+            return T{};
+        } 
+    };
+
+    return createBuilder<H, T, Output, requiredMask>(createHolder());
+}
+
+
 template<typename T>
-auto& makeSharedBuilder()
+auto makeSharedBuilder()
 {
     return makeBuilder<T, OutputType::Shared>();
 }
 
 template<typename T>
-auto& makeUniqueBuilder()
+auto makeUniqueBuilder()
 {
     return makeBuilder<T, OutputType::Unique>();
 }
 
 template<typename T>
-auto& makeValueBuilder()
+auto makeValueBuilder()
 {
     return makeBuilder<T, OutputType::Value>();
 }

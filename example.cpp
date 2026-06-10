@@ -4,15 +4,23 @@ namespace rb = refl_builder;
 
 class Base
 {
-    [[=rb::BuilderParam]] 
-    int c_ = 10;
+protected:
+    [[=rb::BuilderExpose{}]] 
+    int c_ = 0;
 
 private:
-    [[=rb::BuilderMethod, =rb::Required]] 
+    [[=rb::BuilderExpose{.required=true}]] 
     void withBar(int bar) {
         c_ = bar * 2;
     }
 
+    [[=rb::BuilderValidate{}]] 
+    void validate() {
+        if (c_ == 0) {
+            throw std::runtime_error("c_ not setted");
+        }
+    }
+    
 };
 
 class Derived : public Base
@@ -22,17 +30,12 @@ private:
     int b_ = 10;
 
 public:
-    static auto& builder()
-    {
-        return rb::makeUniqueBuilder<Derived>();
-    }
-
     int getB() const {
         return b_;
     }
 
 private:
-    [[=rb::BuilderMethod, =rb::Required]] 
+    [[=rb::BuilderExpose{.required=true}]] 
     void withFoo(int a) {
         b_ += a;
     }
@@ -43,7 +46,7 @@ private:
 
 int main() {
 
-    auto a = Derived::builder()
+    auto a = rb::makeUniqueBuilder<Derived>()
         .withFoo(10)
         .withBar(10)
         .withB(19)
