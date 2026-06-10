@@ -399,12 +399,7 @@ auto makeBuilder()
 
     using H = typename[:objectHolderInfo:];
 
-    struct B;
     constexpr auto requiredMask = ClassRegistry<T>::requiredMask();
-    consteval {
-        auto builderMembers = defineBuilderMembers<H, B, T, Output, requiredMask>();
-        std::meta::define_aggregate(^^B, builderMembers);
-    } 
 
     auto createHolder = [] -> H {
         if constexpr (Output == OutputType::Unique)

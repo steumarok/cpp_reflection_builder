@@ -46,14 +46,14 @@ private:
 
 int main() {
 
-    auto a = rb::makeUniqueBuilder<Derived>()
+    auto a = rb::makeValueBuilder<Derived>()
         .withFoo(10)
         .withBar(10)
         .withB(19)
         .withC(20)
         .build();
 
-    std::cout << a->getB() << std::endl;
+    std::cout << a.getB() << std::endl;
 
     return 1978;
 }
