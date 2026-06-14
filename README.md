@@ -46,6 +46,6 @@ refl_builder::makeValueBuilder<Class>();
 
 ## Examples
 
-Look at [example.cpp](https://github.com/steumarok/cpp_reflection_builder/blob/main/example.cpp)
+Look at [simple_example.cpp](https://github.com/steumarok/cpp_reflection_builder/blob/main/simple_example.cpp) and [policy_example.cpp](https://github.com/steumarok/cpp_reflection_builder/blob/main/policy_example.cpp)
 
 Feel free to write me an email if you have some questions.
